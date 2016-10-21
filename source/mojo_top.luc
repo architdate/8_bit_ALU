@@ -1,0 +1,547 @@
+module mojo_top (
+    input clk,              // 50MHz clock
+    input rst_n,            // reset button (active low)
+    output led [8],         // 8 user controllable LEDs
+    output spi_miso,        // AVR SPI MISO
+    output spi_channel [4], // AVR general purpose pins (used by default to select ADC channel)
+    output avr_rx,          // AVR RX (FPGA TX)
+    output io_led [3][8],   // LEDs on IO Shield
+    output io_seg [8],      // 7-segment LEDs on IO Shield
+    output io_sel [4],      // Digit select on IO Shield
+    input io_dip [3][8]     // DIP switches on IO Shield
+  ) {
+  
+  sig rst;                  // reset signal
+  
+  .clk(clk) {
+    // The reset conditioner is used to synchronize the reset signal to the FPGA
+    // clock. This ensures the entire FPGA comes out of reset at the same time.
+    reset_conditioner reset_cond;
+    
+    
+    .rst(rst) {
+    
+      dff counter[30]; //counter used to cycle through different states     
+     //defining state machine states
+     //total 13 tests
+      fsm state = {START, ADDERTEST1, ADDERTEST2, ADDERTEST3, ADDERERROR, COMPTEST1, COMPTEST2, COMPTEST3, COMPERROR, BOOLTEST1, BOOLTEST2, BOOLTEST3, BOOLTEST4, BOOLERROR, SHIFTTEST1, SHIFTTEST2, SHIFTTEST3, SHIFTERROR, END};
+      
+    }
+  }
+  
+  sig alufn[6]; //6-bit input alufn
+  sig a[8]; //8-bit input a 
+  sig b[8]; //8-bit input b
+  sig alu[8]; //8-bit output of alu
+  const X = 29;
+  
+  alu alu1;   //alu module
+  
+  always {
+    
+    reset_cond.in = ~rst_n; // input raw inverted reset signal
+    rst = reset_cond.out;   // conditioned reset_cond
+    
+    spi_miso = bz;          // not using SPI
+    spi_channel = bzzzz;    // not using flags
+    avr_rx = bz;            // not using serial port
+    
+    led [7:0] = 8h00;       //turning off LEDs on mojo board
+    io_seg = 8hff;          // turn segments off
+    io_sel = 4hf;           // select no digits
+    
+    a = io_dip[0]; //right dip switch controls input a
+    b = io_dip[1]; //middle dip switch controls input b
+    alufn = io_dip[2][5:0]; // first 6-bits of left dip switch controls alufn
+
+    // assigning inputs and output of alu    
+    alu1.alufn = alufn; // alufn input
+    alu1.a = a; //a input
+    alu1.b = b; //b input
+    alu = alu1.result; //alu module output
+
+    io_led[2] = alu; // left leds show output of alu
+    io_led[1] = io_dip[1]; // middle leds show input b
+    io_led[0] = io_dip[0]; // right leds show input a
+    
+    //STATEMACHINE FOR TEST CASES
+    
+    // ADDER Test case 1(ADD): 5+7 = 12
+    // alufn: 6b0
+    // a = 8b101, b = 8b111
+    // If result = 8b1100, move to Adder Test case 2
+    // Else move to Adder_error
+    
+    // ADDER Test case 2(SUBTRACT): -74-70 = -144
+    // alufn: 6b1
+    // a = 8b10110110, b = 8b1000110
+    // If result = 8b01110000, move to Adder Test case 3
+    // Else move to Adder_error
+    
+    // ADDER Test case 3(MULTIPLY): 5*8 = 40
+    // alufn: 6b10
+    // a = 8b101, b = 8b1000
+    // If result = 8b101000, move to Compare Test case 1
+    // Else move to Adder_error 
+    
+    // Adder_Error
+    // Move to Compare Test case 1 if result is correct
+    
+    // Compare Test case 1(CMPEQ): 180 == 180?
+    // alufn: 6b110011
+    // a = 8b10110100, b = 8b10110100
+    // If result = 8b1, move to Compare Test case 2
+    // Else move to Compare_error
+    
+    // Compare Test case 2(CMPLT): 17 < 3?
+    // alufn: 6b110101
+    // a = 8b10001, b = 8b11
+    // If result = 8b0, move to Compare Test case 3
+    // Else move to Compare_error
+    
+    // Compare Test case 3(CMPLE): 15 <= 13?
+    // alufn: 6b110111
+    // a = 8b1111, b = 8b1101
+    // If result = 8b0, move to Bool Test case 1
+    // Else move to Compare_error
+    
+    // Compare_Error
+    // Move to Bool Test case 1 if result is correct
+    
+    // Bool Test case 1(AND): 8b10110100 && 8b11101101 
+    // alufn: 6b11000
+    // a = 8b10110100, b = 8b11101101
+    // If result = 8b10100100, move to Bool Test case 1
+    // Else move to Bool_error
+    
+    // Bool Test case 2(OR): 8b10001100|| 8b00010110
+    // alufn: 6b11110
+    // a = 8b10001100, b = 8b00010110
+    // If result = 8b10011110 , move to Bool Test case 2
+    // Else move to Bool_error
+    
+    // Bool Test case 3(XOR): 8b11110000 ^ 8b00110011
+    // alufn: 6b10110
+    // a = 8b11110000, b = 8b00110011
+    // If result = 8b11000011 , move to Bool Test case 4
+    // Else move to Bool_error
+    
+    // Bool Test case 4("A"LDR): 8b11010100
+    // alufn: 6b11010
+    // a = 8b11010100, b = 8b00110011 (b can be any number)
+    // If result = 8b11010100 , move to Shift Test case 1
+    // Else move to Bool_error
+    
+    // Bool_Error
+    // Move to Shift Test case 1 if result is correct
+    
+    // Shift Test case 1(SHIFT LEFT): 15 << 4 
+    // alufn: 6b100000
+    // a = 8b1111, b = 8b100
+    // If result = 8b11110000, move to Shift Test case 2
+    // Else move to Shift_error
+    
+    // Shift Test case 2(SHIFT RIGHT): 8b10110000 >> 2
+    // alufn: 6b100001
+    // a = 8b10110000, b = 8b10
+    // If result = 8b101100, move to Shift Test case 3
+    // Else move to Shift_error
+    
+    // Shift Test case 3(ARITHMETIC RIGHT SHIFT): 8b10110000 >>> 2 = 8b11101100
+    // alufn: 6b100011
+    // a = 8b10110000, b = 8b10
+    // If result = 8b11101100, move to END
+    // Else move to Shift_error
+    
+    // Shift_Error
+    // Move to End if result is correct
+    
+    case (state.q) {
+      state.START: //normal functioning alu (without test)
+      counter.d = 0; //clock counter is 0 when in START state
+        if (io_dip[2][7]){ //pressing first switch of right dip switches starts TEST states
+          state.d = state.ADDERTEST1; //transition to testing the alu
+        }
+        io_sel = b0111; // select first digit
+        io_seg = 7b10010; //display letter S
+        
+      state.ADDERTEST1: 
+      io_seg = 8hff;          
+      io_sel = 4hf;          
+      alu1.alufn = 6b0;
+      alu1.a = 8b101; 
+      alu1.b = 8b111; 
+      alu = alu1.result; 
+      io_led[0] = 8b101; 
+      io_led[1] = 8b111; 
+      counter.d = counter.q+1; //increases clock counter until delay time is over
+        if (counter.q[X]==1&&alu==8b1100){ 
+          counter.d=0;
+          state.d = state.ADDERTEST2; 
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        else if (counter.q[X] == 1 && alu!= 8b1010){ 
+          counter.d=0;                 //reset counter value to 0
+          state.d=state.ADDERERROR;   //move to adder error state
+        }
+        io_sel = b1011; // select second digit
+        io_seg = 7b1000; //display letter A
+      
+      state.ADDERTEST2: 
+      io_seg = 8hff;          
+      io_sel = 4hf;           
+      alu1.alufn = 6b1; 
+      alu1.a = 8b10110110; 
+      alu1.b = 8b1000110; 
+      alu = alu1.result; 
+      io_led[0] = 8b10110110; 
+      io_led[1] = 8b1000110; 
+      counter.d = counter.q+1; //increases clock counter until delay time is over
+        if (counter.q[X]==1&&alu==8b01110000){ 
+          counter.d=0;
+          state.d = state.ADDERTEST3; 
+        }
+        else if (counter.q[X] == 1 && alu!= 8b01110000){
+          counter.d=0;                 //reset counter value to 0
+          state.d=state.ADDERERROR;   //move to adder error state
+        }
+        io_sel = b1011; // select first digit
+        io_seg = 7b1000; //display letter A
+        
+      state.ADDERTEST3: 
+      io_seg = 8hff;          
+      io_sel = 4hf;           
+      alu1.alufn = 6b10; 
+      alu1.a = 8b101; 
+      alu1.b = 8b1000; 
+      alu = alu1.result; 
+      io_led[0] = 8b101; 
+      io_led[1] = 8b1000; 
+      counter.d = counter.q+1;    //increases clock counter until delay time is over
+        if (counter.q[X]==1&&alu==8b101000){ 
+          counter.d=0;               
+          state.d = state.COMPTEST1; 
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        else if (counter.q[X] == 1 && alu!= 8b101000){ 
+          counter.d=0;                 //reset counter value to 0
+          state.d=state.ADDERERROR;   //move to adder error state
+        }
+        io_sel = b1011;   // select first digit
+        io_seg = 7b1000; //display letter A
+         
+      state.ADDERERROR: 
+      counter.d = counter.q+1;
+        if (counter.q[X]==1){         //once counter reaches defined value
+          counter.d = 0;
+          state.d = state.COMPTEST1; //move to test the next unit
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        
+        
+      state.COMPTEST1: 
+      io_seg = 8hff;          // turn segments off
+      io_sel = 4hf;           // select no digits
+      alu1.alufn = 6b110011;
+      alu1.a = 8b10110100;
+      alu1.b = 8b10110100;
+      alu = alu1.result; 
+      io_led[0] = 8b10110100;
+      io_led[1] = 8b10110100;
+      counter.d = counter.q+1;
+        if (counter.q[X]==1&&alu==8b1){
+          counter.d=0;
+          state.d = state.COMPTEST2;
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }  
+        else if (counter.q[X] == 1 && alu!= 8b1){
+          counter.d=0;
+          state.d=state.COMPERROR;
+        }
+        io_sel = b1101; // select third digit
+        io_seg = 7b1000110; //display letter C
+        
+      state.COMPTEST2: 
+      io_seg = 8hff;          // turn segments off
+      io_sel = 4hf;           // select no digits
+      alu1.alufn = 6b110101; 
+      alu1.a = 8b10001;
+      alu1.b = 8b11;
+      alu = alu1.result; 
+      io_led[0] = 8b10001;
+      io_led[1] = 8b11; 
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b0){
+          counter.d=0;
+          state.d = state.COMPTEST3; 
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        
+        else if (counter.q[X] == 1 && alu!= 8b0){
+          counter.d=0;
+          state.d=state.COMPERROR;
+        }
+        io_sel = b1101;     // select first digit
+        io_seg = 7b1000110; //display letter C 
+          
+      state.COMPTEST3: 
+      io_seg = 8hff;          // turn segments off
+      io_sel = 4hf;           // select no digits
+      alu1.alufn = 6b110111; 
+      alu1.a = 8b1111;
+      alu1.b = 8b1110;
+      alu = alu1.result; 
+      io_led[0] = 8b1111;
+      io_led[1] = 8b1110; 
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b0){
+          counter.d=0;
+          state.d = state.BOOLTEST1;
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        else if (counter.q[X] == 1 && alu!= 8b0){
+          counter.d=0;
+          state.d=state.COMPERROR;
+        }
+        io_sel = b1101;     // select first digit
+        io_seg = 7b1000110; //display letter C 
+         
+      state.COMPERROR: 
+      counter.d = counter.q+1;
+        if (counter.q[X]==1){
+          counter.d = 0;
+          state.d = state.BOOLTEST1;
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        
+        
+      state.BOOLTEST1: 
+      io_seg = 8hff;          // turn segments off
+      io_sel = 4hf;           // select no digits
+      alu1.alufn = 6b11000; 
+      alu1.a = 8b10110100;
+      alu1.b = 8b11101101;
+      alu = alu1.result; 
+      io_led[0] = 8b10110100;
+      io_led[1] = 8b11101101;
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b10100100){
+          counter.d=0;
+          state.d = state.BOOLTEST2;
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        else if (counter.q[X] == 1 && alu!= 8b10100100){
+          counter.d=0;
+          state.d=state.BOOLERROR;
+        }
+        io_sel = b1011; // select second digit
+        io_seg = 7b11; //display letter B
+          
+      state.BOOLTEST2: 
+      io_seg = 8hff;          // turn segments off
+      io_sel = 4hf;           // select no digits  
+      alu1.alufn = 6b11110; 
+      alu1.a = 8b10001100;
+      alu1.b = 8b00010110;
+      alu = alu1.result; 
+      io_led[0] = 8b10001100;
+      io_led[1] = 8b00010110;  
+      counter.d = counter.q+1;
+        if (counter.q[X]==1&&alu==8b10011110){
+          counter.d=0;
+          state.d = state.BOOLTEST3;
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        else if (counter.q[X] == 1 && alu!= 8b10011110){
+          counter.d=0;
+          state.d=state.BOOLERROR;
+        }
+        io_sel = b1011; // select first digit
+        io_seg = 7b11;  //display letter B
+          
+      state.BOOLTEST3: 
+      io_seg = 8hff;          // turn segments off
+      io_sel = 4hf;           // select no digits
+      alu1.alufn = 6b10110; 
+      alu1.a = 8b11110000;
+      alu1.b = 8b00110011;
+      alu = alu1.result; 
+      io_led[0] = 8b11110000;
+      io_led[1] = 8b00110011;  
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b11000011){
+          counter.d=0;
+          state.d = state.BOOLTEST4;
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        else if (counter.q[X] == 1 && alu!= 8b11000011){
+          counter.d=0;
+          state.d=state.BOOLERROR;
+        }
+        io_sel = b1011; // select first digit
+        io_seg = 7b11;  //display letter B
+          
+      state.BOOLTEST4: //BOOLEAN Test case 4("A"LDR): 8b11010100
+      io_seg = 8hff;          // turn segments off
+      io_sel = 4hf;           // select no digits
+      alu1.alufn = 6b11010; 
+      alu1.a = 8b11010100;
+      alu1.b = 8b00110011; // b can be any number
+      alu = alu1.result; 
+      io_led[0] = 8b11010100;
+      io_led[1] = 8b00110011; 
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b11010100){
+          counter.d=0;
+          state.d = state.SHIFTTEST1;
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        else if (counter.q[X] == 1 && alu!= 8b11010100){
+          counter.d=0;
+          state.d=state.BOOLERROR;
+        }
+        io_sel = b1011; // select first digit
+        io_seg = 7b11; //display letter B
+          
+      state.BOOLERROR: //BOOLEAN ERROR
+      counter.d = counter.q+1;
+        if (counter.q[X]==1){
+          counter.d = 0;
+          state.d = state.SHIFTTEST1;
+        }
+        
+          
+      state.SHIFTTEST1: 
+      io_seg = 8hff;          // turn segments off
+      io_sel = 4hf;           // select no digits
+      alu1.alufn = 6b100000; 
+      alu1.a = 8b1111;
+      alu1.b = 8b100;
+      alu = alu1.result; 
+      io_led[0] = 8b1111;
+      io_led[1] = 8b100; 
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b11110000){
+          counter.d=0;
+          state.d = state.SHIFTTEST2;
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        else if (counter.q[X] == 1 && alu!= 8b11110000){
+          counter.d=0;
+          state.d=state.SHIFTERROR;
+        }
+        io_sel = b0111;   // select first digit
+        io_seg = 7b10010; //display letter S
+          
+      state.SHIFTTEST2: 
+      io_seg = 8hff;          // turn segments off
+      io_sel = 4hf;           // select no digits
+      alu1.alufn = 6b100001; 
+      alu1.a = 8b10110000;
+      alu1.b = 8b10;
+      alu = alu1.result; 
+      io_led[0] = 8b10110000;
+      io_led[1] = 8b10; 
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b101100){
+          counter.d=0;
+          state.d = state.SHIFTTEST3;
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        else if (counter.q[X] == 1 && alu!= 8b101100){
+          counter.d=0;
+          state.d=state.SHIFTERROR;
+        }
+        io_sel = b0111;   // select first digit
+        io_seg = 7b10010; //display letter S
+          
+      state.SHIFTTEST3: 
+      io_seg = 8hff;          // turn segments off
+      io_sel = 4hf;           // select no digits
+      alu1.alufn = 6b100011; 
+      alu1.a = 8b10110000;
+      alu1.b = 8b10;
+      alu = alu1.result; 
+      io_led[0] = 8b10110000;
+      io_led[1] = 8b10; 
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b11101100){
+          counter.d=0;
+          state.d = state.END;
+        }  
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+        else if (counter.q[X] == 1 && alu!= 8b11101100){
+          counter.d=0;
+          state.d=state.SHIFTERROR;
+        }
+        io_sel = b0111;   // select first digit
+        io_seg = 7b10010; //display letter S 
+          
+      state.SHIFTERROR: //SHIFTER ERROR
+      counter.d = counter.q+1;
+        if (counter.q[X]==1){
+          counter.d = 0;
+          state.d = state.END;
+        }
+        else if (io_dip[2][7] == 0){
+          counter.d = 0;
+          state.d=state.END;
+        }
+         
+        
+      state.END:                //DONE WITH TEST
+      counter.d = counter.q+1;
+        if (counter.q[X]==1){
+          counter.d = 0;
+          state.d = state.START;//return to startstate
+        }
+        else{
+          //io_sel = b1110; // select last digit
+          //io_seg = 7b110; //display letter E
+        }
+    }
+    
+}
+}
